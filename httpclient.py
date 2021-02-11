@@ -20,12 +20,11 @@
 
 import sys
 import socket
-import re
 # you may use urllib to encode data appropriately
 import urllib.parse
 
 def help():
-    print("httpclient.py [GET/POST] [URL]\n")
+    print("httpclient.py [GET/POST] [URL]")
 
 class HTTPResponse(object):
     def __init__(self, code=200, body=""):
@@ -33,7 +32,6 @@ class HTTPResponse(object):
         self.body = body
 
 class HTTPClient(object):
-    #def get_host_port(self,url):
 
     def connect(self, host, port):
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -41,22 +39,43 @@ class HTTPClient(object):
         return None
 
     def get_code(self, data):
-        return None
+        # data must be splitted line by line before passed in
+        return data[0]
 
-    def get_headers(self,data):
-        return None
+    def parse_code(self, data):
+        try:
+            return int(data.split()[1])
+        except:
+            return 500
+
+    def get_headers(self, data):
+        # data must be splitted line by line before passed in
+        for i in range(1, len(data)):
+            # found the empty line, take all lines before(except for status code line)
+            if not data[i]: return "\r\n".join(data[1:i+1])
+    
+    def parse_headers(self, data):
+        header_dict = {}
+        for each in data.splitlines():
+            # use one-element list to prevent unpack error
+            for key, value in [each.split(": ", 1)]:
+                header_dict[key] = value
+        return header_dict
 
     def get_body(self, data):
-        return None
-    
+        # data must be splitted line by line before passed in
+        for i in range(1, len(data)):
+            # found the empty line, take all line after
+            if not data[i]: return "\r\n".join(data[i+1:]) + "\r\n"
+        
     def sendall(self, data):
         self.socket.sendall(data.encode('utf-8'))
         
     def close(self):
         self.socket.close()
 
-    # read everything from the socket
     def recvall(self, sock):
+        # read everything from the socket
         buffer = bytearray()
         done = False
         while not done:
@@ -70,11 +89,51 @@ class HTTPClient(object):
     def GET(self, url, args=None):
         code = 500
         body = ""
+
+        # https://docs.python.org/3/library/urllib.parse.html Author: python officials, Last Updated : Unknown
+        parsedurl = urllib.parse.urlparse(url)
+        port = parsedurl.port if parsedurl.port else 80
+        path = parsedurl.path if parsedurl.path else "/"
+
+        self.connect(parsedurl.hostname, port)
+        self.sendall(f"GET {path} HTTP/1.1\r\nHost: {parsedurl.netloc}\r\nConnection: close\r\n\r\n")
+        self.data = self.recvall(self.socket)
+        self.close()
+        self.splitteded_data = self.data.splitlines()
+        code = self.parse_code(self.get_code(self.splitteded_data))
+        body = self.get_body(self.splitteded_data)
         return HTTPResponse(code, body)
+    
+    def generate_post_body(self, args):
+        if not args: return ""
+        if not len(args.items()): return ""
+        # https://www.geeksforgeeks.org/comprehensions-in-python/ Author: rituraj_jain, Last Updated : 14 Nov, 2018
+        body = "&".join([f"{key}={value}" for key, value in args.items()])
+        return body
 
     def POST(self, url, args=None):
         code = 500
-        body = ""
+        body = self.generate_post_body(args)
+
+        parsedurl = urllib.parse.urlparse(url)
+        port = parsedurl.port if parsedurl.port else 80
+        path = parsedurl.path if parsedurl.path else "/"
+
+        self.connect(parsedurl.hostname, port)
+
+        self.sendall(f"POST {path} HTTP/1.1\r\n" +
+                     f"Host: {parsedurl.netloc}\r\n" +
+                      "Content-Type: application/x-www-form-urlencoded\r\n" +
+                      "Connection: close\r\n" +
+                     f"Content-Length: {len(body)}\r\n" +
+                      "\r\n" +
+                     f"{body}\r\n")
+
+        self.data = self.recvall(self.socket)
+        self.close()
+        self.splitteded_data = self.data.splitlines()
+        code = self.parse_code(self.get_code(self.splitteded_data))
+        body = self.get_body(self.splitteded_data)
         return HTTPResponse(code, body)
 
     def command(self, url, command="GET", args=None):
@@ -90,6 +149,10 @@ if __name__ == "__main__":
         help()
         sys.exit(1)
     elif (len(sys.argv) == 3):
-        print(client.command( sys.argv[2], sys.argv[1] ))
+        res = client.command( sys.argv[2], sys.argv[1] )
+        print(res.code)
+        print(res.body)
     else:
-        print(client.command( sys.argv[1] ))
+        res = client.command( sys.argv[1] )
+        print(res.code)
+        print(res.body)
